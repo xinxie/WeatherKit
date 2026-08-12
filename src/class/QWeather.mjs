@@ -70,6 +70,27 @@ export default class QWeather {
             ppb: "PARTS_PER_BILLION",
             ppm: "PARTS_PER_MILLION",
         },
+        WeatherAlert: {
+            // QWeather 没有提供 CAP category，本表按官方事件名称映射；具体类别必须先于 Met 匹配。
+            // QWeather does not provide CAP category; this table maps official event names, with specific categories matched before Met.
+            EventCategories: [
+                { category: "Geo", codes: [[1013, 1013], [1037, 1037], [1241, 1251], [1603, 1603], [2032, 2032], [2159, 2159], [2163, 2163], [2320, 2323], [2348, 2348], [2363, 2363], [2373, 2373], [2378, 2378], [2399, 2400], [3140, 3140], [3144, 3144]] },
+                { category: "Safety", codes: [[1044, 1045], [1218, 1218], [2419, 2420], [2713, 2713]] },
+                { category: "Security", codes: [] },
+                { category: "Rescue", codes: [] },
+                { category: "Fire", codes: [[1025, 1026], [1041, 1041], [1077, 1077], [1084, 1084], [1605, 1605], [2005, 2005], [2132, 2132], [2158, 2158], [2192, 2192], [2207, 2207], [2302, 2302], [2349, 2349], [2414, 2414], [2743, 2743], [3139, 3139]] },
+                { category: "Health", codes: [[1024, 1024], [1042, 1042], [1066, 1066], [1068, 1069], [1071, 1072], [1082, 1082], [1210, 1210], [2851, 2851]] },
+                { category: "Env", codes: [[1029, 1029], [1032, 1032], [1067, 1067], [1074, 1074], [1217, 1217], [1271, 1274], [2202, 2202], [2374, 2374], [2389, 2389], [2413, 2413], [2527, 2527]] },
+                { category: "Transport", codes: [[1021, 1021], [1046, 1046], [1057, 1057], [2077, 2078], [2300, 2301], [2328, 2328], [2360, 2360], [2375, 2376], [2385, 2388], [2415, 2415], [2554, 2554], [2722, 2723], [2791, 2797]] },
+                { category: "Infra", codes: [[1081, 1081], [1203, 1204], [1216, 1216], [1221, 1221]] },
+                { category: "CBRNE", codes: [] },
+                { category: "Other", codes: [[2166, 2166], [3106, 3106], [3147, 3147], [9999, 9999]] },
+                {
+                    category: "Met",
+                    codes: [[1001, 1089], [1201, 1221], [1241, 1251], [1271, 1274], [1601, 1610], [1701, 1710], [1801, 1805], [2001, 2007], [2029, 2033], [2050, 2054], [2070, 2085], [2100, 2109], [2111, 2111], [2120, 2135], [2150, 2150], [2152, 2168], [2190, 2193], [2200, 2205], [2207, 2221], [2300, 2309], [2311, 2328], [2330, 2333], [2341, 2341], [2343, 2343], [2345, 2346], [2348, 2400], [2409, 2409], [2411, 2426], [2501, 2502], [2521, 2532], [2550, 2554], [2581, 2581], [2601, 2620], [2641, 2641], [2713, 2713], [2722, 2723], [2743, 2743], [2749, 2749], [2751, 2753], [2755, 2756], [2791, 2797], [2801, 2804], [2839, 2853], [2873, 2874], [3101, 3107], [3131, 3148]],
+                },
+            ],
+        },
         Availability: {
             Minutely: ["CN", "HK", "MO"],
             AirQuality: ["AD", "BE", "BG", "CA", "CN", "HR", "CZ", "DK", "FI", "FR", "DE", "GI", "GR", "HK", "HU", "IE", "JP", "KR", "LV", "LT", "MO", "MT", "NL", "MK", "NO", "PL", "PT", "RO", "RS", "SG", "SK", "SI", "ES", "SE", "CH", "TW", "TH", "GB", "US"],
@@ -718,24 +739,20 @@ export default class QWeather {
 
     #CreateWeatherAlerts(body) {
         Console.info("☑️ CreateWeatherAlerts");
-        const alerts = Array.isArray(body?.alerts) ? body.alerts : [];
-        const attributions = Array.isArray(body?.metadata?.attributions) ? body.metadata.attributions : [];
-        const convertedAlerts = alerts.map(alert => this.#CreateWeatherAlert(alert)).filter(Boolean);
-        const attributionSource = attributions.find(item => item && !/延迟|过时|disclaimer|delayed|outdated/i.test(item)) || "国家预警信息发布中心";
-        const source = convertedAlerts.find(alert => alert?.source)?.source || attributionSource;
-        const weatherAlerts = {
+        const convertedAlerts = (Array.isArray(body?.alerts) ? body.alerts : []).map(alert => this.#CreateWeatherAlert(alert)).filter(Boolean);
+        Console.info("✅ CreateWeatherAlerts");
+        return {
             alerts: convertedAlerts,
             areaName: convertedAlerts.find(alert => alert?.areaName)?.areaName ?? "",
-            source,
+            source: convertedAlerts.find(alert => alert?.source)?.source || (Array.isArray(body?.metadata?.attributions) ? body.metadata.attributions : []).find(item => item && !/延迟|过时|disclaimer|delayed|outdated/i.test(item)) || "国家预警信息发布中心",
         };
-        Console.info("✅ CreateWeatherAlerts");
-        return weatherAlerts;
     }
 
     /**
      * 将单条 QWeather 预警转成 Apple alertDetails JSON 的中间记录。
      * Convert one QWeather alert item to the intermediate record used by Apple alertDetails JSON.
-     * @param {any} alert QWeather alerts[] 项；senderName=签发者/source，areaName=受影响区域，onsetTime=eventOnsetTime，eventType=phenomenon/token。
+     * @param {any} alert QWeather alerts[] 项；senderName 为签发者，areaName 为受影响区域，onsetTime 为事件开始时间，eventType.name 为本地化事件名，eventType.code 用于分类和 token。
+     * QWeather alerts[] item; senderName is the issuer, areaName is the affected area, onsetTime is the event onset, eventType.name is the localized event name, and eventType.code supplies the category and token.
      * @returns {object | undefined} 标准化后的预警记录 / Normalized alert record.
      */
     #CreateWeatherAlert(alert) {
@@ -745,42 +762,36 @@ export default class QWeather {
         const expireTime = this.#DateISOString(alert?.expiresTime || alert?.expireTime);
         const eventOnsetTime = this.#DateISOString(alert?.eventOnsetTime || alert?.onsetTime || alert?.effectiveTime) || effectiveTime;
         const eventEndTime = this.#DateISOString(alert?.eventEndTime || alert?.endTime || alert?.expiresTime || alert?.expireTime);
-        const guidelines = this.#SplitWeatherAlertGuidelines(alert?.instruction ?? alert?.instructions);
-        const description = String(alert?.headline ?? alert?.eventType?.name ?? alert?.description ?? "").trim();
-        const message = String(alert?.description ?? "").trim() || String(alert?.headline ?? description ?? "").trim();
         const source = String(alert?.senderName ?? "").trim();
-        const severity = alert?.severity ?? "unknown";
         const areaId = String(alert?.areaId ?? alert?.areaCode ?? "").trim();
         const areaName = String(alert?.areaName ?? "").trim();
-        const phenomenon = String(alert?.eventType?.name ?? "").trim();
         const token = String(alert?.token ?? alert?.eventType?.code ?? alert?.icon ?? "").trim();
-        const certainty = alert?.certainty ?? "unknown";
-        const importance = alert?.importance ?? "";
-        const significance = alert?.significance ?? "";
-        const urgency = alert?.urgency ?? "unknown";
+        const eventCode = Number(alert?.eventType?.code);
+        const eventName = String(alert?.eventType?.name ?? "").trim();
         return {
             ...(areaId ? { areaId } : {}),
             ...(areaName ? { areaName } : {}),
-            certainty,
-            description,
+            certainty: alert?.certainty ?? "unknown",
+            description: String(alert?.headline ?? "").trim(),
             effectiveTime,
             ...(eventEndTime ? { eventEndTime } : {}),
             eventOnsetTime,
             ...(expireTime ? { expireTime } : {}),
-            guidelines,
+            guidelines: this.#SplitWeatherAlertGuidelines(alert?.instruction ?? alert?.instructions),
             identifier: alert?.id,
-            ...(importance ? { importance } : {}),
+            ...(alert?.importance ? { importance: alert.importance } : {}),
             issuedTime,
-            message,
-            ...(phenomenon ? { phenomenon } : {}),
+            ...(eventName ? { eventName } : {}),
+            message: (String(alert?.description ?? "").trim() || String(alert?.headline ?? "").trim()).replace(/^\p{Ll}/u, character => character.toUpperCase()),
+            phenomenon: (this.#Config.WeatherAlert.EventCategories.find(({ codes }) => codes.some(([start, end]) => eventCode >= start && eventCode <= end))?.category ?? eventName) || "Other",
             responses: Array.isArray(alert?.responseTypes) ? alert.responseTypes.map(response => String(response ?? "").trim()).filter(Boolean) : [],
             reportedAt: issuedTime,
-            ...(significance ? { significance } : {}),
+            ...(alert?.significance ? { significance: alert.significance } : {}),
             ...(source ? { source } : {}),
-            severity,
+            severity: alert?.severity ?? "unknown",
             standard: "",
             ...(token ? { token } : {}),
-            urgency,
+            urgency: alert?.urgency ?? "unknown",
         };
     }
 

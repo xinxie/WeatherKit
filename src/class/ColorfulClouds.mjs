@@ -88,6 +88,20 @@ export default class ColorfulClouds {
                 4: "past",
                 5: "unknown",
             },
+            Categories: {
+                1: "Geo",
+                2: "Met",
+                3: "Safety",
+                4: "Security",
+                5: "Rescue",
+                6: "Fire",
+                7: "Health",
+                8: "Env",
+                9: "Transport",
+                10: "Infra",
+                11: "CBRNE",
+                12: "Other",
+            },
         },
         Availability: {
             Minutely: [
@@ -787,13 +801,12 @@ export default class ColorfulClouds {
     #CreateWeatherAlerts(body) {
         Console.info("☑️ CreateWeatherAlerts");
         const convertedAlerts = (Array.isArray(body?.alerts) ? body.alerts : []).map(alert => this.#CreateWeatherAlert(alert)).filter(Boolean);
-        const weatherAlerts = {
+        Console.info("✅ CreateWeatherAlerts");
+        return {
             alerts: convertedAlerts,
             areaName: convertedAlerts.find(alert => alert?.areaName)?.areaName ?? "",
             source: convertedAlerts.find(alert => alert?.source)?.source || "彩云天气",
         };
-        Console.info("✅ CreateWeatherAlerts");
-        return weatherAlerts;
     }
 
     #CreateWeatherAlert(alert) {
@@ -805,22 +818,22 @@ export default class ColorfulClouds {
         const eventOnsetTime = this.#DateISOString(alert?.onset_time) || effectiveTime;
         const area = Array.isArray(alert?.areas) ? alert.areas.find(item => item) : undefined;
         const geocode = Array.isArray(area?.geocodes) ? area.geocodes.find(item => item?.value) : undefined;
-        const description = String(alert?.event_name ?? alert?.headline ?? "").trim();
-        const message = String(alert?.description ?? alert?.headline ?? description).trim();
         const source = String(alert?.sender_name ?? "").trim() || weatherAlertConfig.Sources[Number(alert?.source)] || "";
+        const eventName = String(alert?.event_name ?? "").trim();
         return {
             ...(geocode?.value ? { areaId: String(geocode.value).trim() } : {}),
             ...(area?.area_desc ? { areaName: String(area.area_desc).trim() } : {}),
             certainty: weatherAlertConfig.Certainties[Number(alert?.certainty)] || "unknown",
-            description,
+            description: String(alert?.headline ?? "").trim(),
             effectiveTime,
             eventOnsetTime,
             ...(expireTime ? { eventEndTime: expireTime, expireTime } : {}),
             guidelines: this.#SplitWeatherAlertGuidelines(alert?.instruction),
             identifier: alert?.id,
             issuedTime,
-            message,
-            ...(description ? { phenomenon: description } : {}),
+            ...(eventName ? { eventName } : {}),
+            message: String(alert?.description ?? alert?.headline ?? "").trim(),
+            phenomenon: (Array.isArray(alert?.categories) ? alert.categories : []).map(category => weatherAlertConfig.Categories[Number(category)]).find(Boolean) || eventName || "Other",
             reportedAt: issuedTime,
             severity: weatherAlertConfig.Severities[Number(alert?.severity)] || "unknown",
             ...(source ? { source } : {}),

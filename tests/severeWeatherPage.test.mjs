@@ -110,7 +110,8 @@ test("QWeather HTML extraction is separated from WeatherAlert construction", asy
 
     assert.equal(extracted.areaName, "建邺");
     assert.equal(extracted.source, "建邺区气象台");
-    assert.equal(extracted.alerts[0].description, "雷暴橙色预警");
+    assert.equal(extracted.alerts[0].description, "建邺区气象台发布雷暴橙色预警信号。");
+    assert.equal(extracted.alerts[0].eventName, "雷暴橙色预警信号。");
     assert.deepEqual(extracted.alerts[0].guidelines, ["注意防范雷电。", "远离高大树木。"]);
     assert.equal("issuedBy" in extracted.alerts[0], false);
     assert.equal(extracted.alerts[0].reportedAt, "2026-07-31T03:00:00.000Z");
@@ -188,12 +189,13 @@ test("QWeather Alert API is standardized by QWeather class", async () => {
         assert.equal(extracted.alerts[0].areaId, "320100");
         assert.equal(extracted.alerts[0].areaName, "南京市");
         assert.equal(extracted.alerts[0].description, "南京市气象台发布高温橙色预警信号。");
+        assert.equal(extracted.alerts[0].eventName, "高温");
         assert.deepEqual(extracted.alerts[0].responses, ["monitor"]);
         assert.equal(extracted.alerts[0].effectiveTime, "2026-08-02T09:48:00.000Z");
         assert.equal(extracted.alerts[0].eventOnsetTime, "2026-08-02T09:48:00.000Z");
         assert.equal(extracted.alerts[0].eventEndTime, "2026-08-03T09:48:00.000Z");
         assert.equal(extracted.alerts[0].expireTime, "2026-08-03T09:48:00.000Z");
-        assert.equal(extracted.alerts[0].phenomenon, "高温");
+        assert.equal(extracted.alerts[0].phenomenon, "Met");
         assert.equal(extracted.alerts[0].source, "南京市气象台");
         assert.equal(extracted.alerts[0].token, "1009");
         assert.equal(extracted.alerts[0].reportedAt, "2026-08-02T09:48:00.000Z");
@@ -208,6 +210,151 @@ test("QWeather Alert API is standardized by QWeather class", async () => {
     } finally {
         globalThis.fetch = originalFetch;
     }
+});
+
+test("QWeather alert messages capitalize the first character without lowercasing acronyms", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+        const body = structuredClone(qWeatherAlertAPI);
+        body.alerts[0].description = "blue warning for strong winds. These conditions are expected to last until 9:00 PM (GMT+8).";
+        return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+    };
+
+    try {
+        const extracted = await new QWeather({ country: "CN", language: "en-US", latitude: "31.23", longitude: "121.47" }, "test-token").WeatherAlert();
+        assert.equal(extracted.alerts[0].message, "Blue warning for strong winds. These conditions are expected to last until 9:00 PM (GMT+8).");
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("QWeather event codes map to CAP phenomena", async () => {
+    const originalFetch = globalThis.fetch;
+    const fixtures = [
+        ["1009", "Met"],
+        ["1013", "Geo"],
+        ["1044", "Safety"],
+        ["1025", "Fire"],
+        ["1024", "Health"],
+        ["1029", "Env"],
+        ["1046", "Transport"],
+        ["1203", "Infra"],
+        ["9999", "Other"],
+        ["9998", "高温"],
+    ];
+
+    try {
+        for (const [code, expected] of fixtures) {
+            globalThis.fetch = async () => {
+                const body = structuredClone(qWeatherAlertAPI);
+                body.alerts[0].eventType.code = code;
+                return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+            };
+            const alerts = await new QWeather({ country: "CN", language: "zh-CN", latitude: "32.115", longitude: "118.814" }, "test-token").WeatherAlert();
+            assert.equal(alerts.alerts[0].phenomenon, expected, code);
+        }
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("all documented QWeather event codes map to CAP categories", async () => {
+    const originalFetch = globalThis.fetch;
+    const documentedCodeRanges = [
+        [1001, 1069], [1071, 1082], [1084, 1089], [1201, 1219], [1221, 1221], [1241, 1251], [1271, 1274], [1601, 1610], [1701, 1710], [1801, 1805],
+        [2001, 2007], [2029, 2033], [2050, 2054], [2070, 2085], [2100, 2109], [2111, 2111], [2120, 2135], [2150, 2150], [2152, 2168], [2190, 2193],
+        [2200, 2205], [2207, 2221], [2300, 2309], [2311, 2328], [2330, 2333], [2341, 2341], [2343, 2343], [2345, 2346], [2348, 2400], [2409, 2409],
+        [2411, 2426], [2501, 2502], [2521, 2532], [2550, 2554], [2581, 2581], [2601, 2620], [2641, 2641], [2713, 2713], [2722, 2723], [2743, 2743],
+        [2749, 2749], [2751, 2753], [2755, 2756], [2791, 2797], [2801, 2804], [2839, 2853], [2873, 2874], [3101, 3107], [3131, 3148], [9999, 9999],
+    ];
+    const documentedCodes = documentedCodeRanges.flatMap(([start, end]) => Array.from({ length: end - start + 1 }, (_, index) => String(start + index)));
+    const categories = new Set(["Geo", "Met", "Safety", "Security", "Rescue", "Fire", "Health", "Env", "Transport", "Infra", "CBRNE", "Other"]);
+
+    globalThis.fetch = async () => {
+        const body = structuredClone(qWeatherAlertAPI);
+        body.alerts = documentedCodes.map((code, index) => ({
+            ...body.alerts[0],
+            id: `documented-event-${index}`,
+            eventType: { code, name: `Event ${code}` },
+        }));
+        return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+    };
+
+    try {
+        const alerts = await new QWeather({ country: "CN", language: "en-US", latitude: "32.115", longitude: "118.814" }, "test-token").WeatherAlert();
+        assert.equal(alerts.alerts.length, documentedCodes.length);
+        for (const [index, alert] of alerts.alerts.entries()) {
+            assert.ok(categories.has(alert.phenomenon), `${documentedCodes[index]}: ${alert.phenomenon}`);
+            assert.notEqual(alert.phenomenon, `Event ${documentedCodes[index]}`, documentedCodes[index]);
+        }
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("QWeather title normalization supports translated and CAP headline grammars", () => {
+    const issuedTime = "2026-08-10T00:00:00.000Z";
+    const headlines = [
+        ["浦东新区气象台发布暴雨橙色预警信号。", "暴雨", "暴雨橙色预警"],
+        ["Nanjing Meteorological Observatory issues a blue typhoon warning", "Typhoon", "Blue Typhoon Warning"],
+        ["Pudong New Area Meteorological Observatory issued an orange rainstorm warning", "Rainstorm", "Orange Rainstorm Warning"],
+        ["Severe Thunderstorm Warning issued August 10 at 2:26AM EDT until August 10 at 3:30AM EDT by NWS Grand Rapids MI", "Severe Thunderstorm Warning", "Severe Thunderstorm Warning"],
+        ["Flood Watch issued August 9 at 8:34PM EDT until August 10 at 11:00AM EDT by NWS Grand Rapids MI", "Flood Watch", "Flood Watch"],
+        ["Flash Flood Warning issued for Los Angeles", "Flash Flood Warning.", "Flash Flood Warning"],
+        ["", "大雨警報", "大雨警報"],
+        ["火山灰に関する情報", "火山灰", "火山灰に関する情報"],
+    ];
+
+    const alerts = WeatherAlerts.Build(
+        {
+            alerts: headlines.map(([description, eventName], index) => ({
+                description,
+                eventName,
+                guidelines: [],
+                issuedTime,
+                message: description,
+                phenomenon: "Met",
+                reportedAt: issuedTime,
+                severity: index === 0 ? "severe" : "minor",
+                standard: "",
+            })),
+            areaName: "",
+            source: "QWeather",
+        },
+        {
+            attributionUrl: "https://www.qweather.com/",
+            identifier: "title-grammar-fixtures",
+            language: "en-US",
+        },
+    );
+
+    assert.deepEqual(
+        alerts.map(alert => alert.description),
+        headlines.map(([, , expected]) => expected),
+    );
+});
+
+test("localized event names select the matching provider alert", () => {
+    const appleAlerts = [{ description: "Coastal Flood Advisory", phenomenon: "Other", token: "" }];
+    const providerAlerts = [
+        { description: "", eventName: "Flood Watch", guidelines: [], phenomenon: "Met", severity: "minor", token: "watch" },
+        { description: "", eventName: "Coastal Flood Advisory", guidelines: [], phenomenon: "Met", severity: "minor", token: "advisory" },
+    ];
+
+    WeatherAlerts.mergeAlerts(appleAlerts, providerAlerts);
+
+    assert.equal(appleAlerts[0].description, "Coastal Flood Advisory");
+    assert.equal(appleAlerts[0].token, "advisory");
+});
+
+test("localized event names allow complete provider headlines to replace generic titles", () => {
+    const appleAlerts = [{ description: "暴雨", phenomenon: "Other" }];
+    const providerAlerts = [{ description: "南京市气象台发布暴雨蓝色预警信号。", eventName: "暴雨", guidelines: [], phenomenon: "Met", severity: "minor" }];
+
+    WeatherAlerts.mergeAlerts(appleAlerts, providerAlerts);
+
+    assert.equal(appleAlerts[0].description, "暴雨蓝色预警");
+    assert.equal(appleAlerts[0].phenomenon, "Met");
 });
 
 test("ColorfulClouds CAP Alert API is standardized by ColorfulClouds class", async () => {
@@ -243,14 +390,15 @@ test("ColorfulClouds CAP Alert API is standardized by ColorfulClouds class", asy
         assert.equal(extracted.alerts[0].areaId, "CAC037");
         assert.equal(extracted.alerts[0].areaName, "Los Angeles");
         assert.equal(extracted.alerts[0].certainty, "likely");
-        assert.equal(extracted.alerts[0].description, "Flash Flood Warning.");
+        assert.equal(extracted.alerts[0].description, "Flash Flood Warning issued for Los Angeles");
         assert.equal(extracted.alerts[0].effectiveTime, "2025-01-01T00:01:00.000Z");
         assert.equal(extracted.alerts[0].eventOnsetTime, "2025-01-01T00:02:00.000Z");
         assert.equal(extracted.alerts[0].eventEndTime, "2025-01-02T00:00:00.000Z");
         assert.equal(extracted.alerts[0].expireTime, "2025-01-02T00:00:00.000Z");
         assert.equal(extracted.alerts[0].issuedTime, "2025-01-01T00:00:00.000Z");
         assert.equal(extracted.alerts[0].message, "Flash flooding caused by excessive rainfall is expected.");
-        assert.equal(extracted.alerts[0].phenomenon, "Flash Flood Warning.");
+        assert.equal(extracted.alerts[0].eventName, "Flash Flood Warning.");
+        assert.equal(extracted.alerts[0].phenomenon, "Met");
         assert.equal(extracted.alerts[0].reportedAt, "2025-01-01T00:00:00.000Z");
         assert.equal(extracted.alerts[0].severity, "severe");
         assert.equal(extracted.alerts[0].source, "NWS Los Angeles/Oxnard CA");
@@ -262,11 +410,76 @@ test("ColorfulClouds CAP Alert API is standardized by ColorfulClouds class", asy
     }
 });
 
+test("ColorfulClouds CAP categories map to phenomena", async () => {
+    const originalFetch = globalThis.fetch;
+    const fixtures = [
+        [[1], "Geo"],
+        [[2], "Met"],
+        [[3], "Safety"],
+        [[4], "Security"],
+        [[5], "Rescue"],
+        [[6], "Fire"],
+        [[7], "Health"],
+        [[8], "Env"],
+        [[9], "Transport"],
+        [[10], "Infra"],
+        [[11], "CBRNE"],
+        [[12], "Other"],
+        [[999], "Flash Flood Warning."],
+    ];
+
+    try {
+        for (const [categories, expected] of fixtures) {
+            globalThis.fetch = async () => {
+                const body = structuredClone(colorfulCloudsAlertAPI);
+                body.alerts[0].categories = categories;
+                return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+            };
+            const alerts = await new ColorfulClouds({ country: "US", language: "en-US", latitude: "34.05", longitude: "-118.25" }, "test-token").WeatherAlert();
+            assert.equal(alerts.alerts[0].phenomenon, expected, categories.join(","));
+        }
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
 test("QWeather source extraction falls back to the English attribution label", () => {
     const englishHtml = sourceHtml
         .replace("建邺区气象台发布雷暴橙色预警信号。", "Thunderstorm orange warning.")
         .replace("预警数据来源：国家预警信息发布中心", "Warning data source: National Early Warning Center");
     assert.equal(WeatherAlerts.ExtractQWeather(englishHtml).source, "National Early Warning Center");
+});
+
+test("QWeather HTML extraction distinguishes CAP issuers from translated agency prefixes", () => {
+    const capHtml = sourceHtml.replace("建邺区气象台发布雷暴橙色预警信号。", "Coastal Flood Advisory issued August 9 at 9:43PM PDT until August 13 at 2:00AM PDT by NWS San Francisco CA");
+    const capForHtml = sourceHtml.replace("建邺区气象台发布雷暴橙色预警信号。", "Flash Flood Warning issued for Los Angeles");
+    const translatedHtml = sourceHtml.replace("建邺区气象台发布雷暴橙色预警信号。", "Nanjing Meteorological Observatory issues a blue typhoon warning");
+    const translatedIssuedHtml = sourceHtml.replace("建邺区气象台发布雷暴橙色预警信号。", "Pudong New Area Meteorological Observatory issued an orange rainstorm warning");
+
+    const capAlert = WeatherAlerts.ExtractQWeather(capHtml);
+    const capForAlert = WeatherAlerts.ExtractQWeather(capForHtml);
+    const translatedAlert = WeatherAlerts.ExtractQWeather(translatedHtml);
+    const translatedIssuedAlert = WeatherAlerts.ExtractQWeather(translatedIssuedHtml);
+    const context = {
+        attributionUrl: new URL("https://www.qweather.com/severe-weather/test.html"),
+        countryCode: "US",
+        identifier: "headline-parser-fixtures",
+        language: "en-US",
+    };
+
+    assert.equal(capAlert.alerts[0].description, "Coastal Flood Advisory issued August 9 at 9:43PM PDT until August 13 at 2:00AM PDT by NWS San Francisco CA");
+    assert.equal(capAlert.alerts[0].eventName, "Coastal Flood Advisory");
+    assert.equal(capAlert.alerts[0].source, "NWS San Francisco CA");
+    assert.equal(capForAlert.alerts[0].eventName, "Flash Flood Warning");
+    assert.equal(translatedAlert.alerts[0].description, "Nanjing Meteorological Observatory issues a blue typhoon warning");
+    assert.equal(translatedAlert.alerts[0].eventName, "Blue Typhoon Warning");
+    assert.equal(translatedAlert.alerts[0].source, "Nanjing Meteorological Observatory");
+    assert.equal(translatedIssuedAlert.alerts[0].eventName, "Orange Rainstorm Warning");
+    assert.equal(translatedIssuedAlert.alerts[0].source, "Pudong New Area Meteorological Observatory");
+    assert.equal(WeatherAlerts.Build(capAlert, context)[0].description, "Coastal Flood Advisory");
+    assert.equal(WeatherAlerts.Build(capForAlert, context)[0].description, "Flash Flood Warning");
+    assert.equal(WeatherAlerts.Build(translatedAlert, context)[0].description, "Blue Typhoon Warning");
+    assert.equal(WeatherAlerts.Build(translatedIssuedAlert, context)[0].description, "Orange Rainstorm Warning");
 });
 
 test("Pages routes WeatherAlert requests through Hono before fetching QWeather", async () => {
@@ -344,7 +557,7 @@ test("Pages routes coordinate WeatherAlert identifiers through QWeather Alert AP
             assert.equal(body[0].expireTime, "2026-08-03T09:48:00.000Z", pathname);
             assert.equal(body[0].issuedTime, "2026-08-02T09:48:00.000Z", pathname);
             assert.equal(body[0].importance, "high", pathname);
-            assert.equal(body[0].phenomenon, "高温", pathname);
+            assert.equal(body[0].phenomenon, "Met", pathname);
             assert.equal(body[0].reportedAt, "2026-08-02T09:48:00.000Z", pathname);
             assert.equal(body[0].source, "南京市气象台", pathname);
             assert.equal(body[0].token, "1009", pathname);
